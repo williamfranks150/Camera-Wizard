@@ -1,0 +1,296 @@
+--- "Merlin fixed index(1).html"
++++ index.html
+@@
+-<meta name="merlin-build" content="interface-cleanup-2026-09-22">
++<meta name="merlin-build" content="chat-continuity-2026-09-23">
+@@
+ #glow{display:none !important}
++
++/* =====================================================================
++   CHAT CONTINUITY — voice and typed chat are separate display surfaces.
++   Voice uses temporary subtitles. Text mode owns a persistent chat thread.
++   ===================================================================== */
++.answerbox{padding:0 !important;max-height:min(42vh,360px) !important;overflow:hidden !important;background:#f5f6f8 !important}
++.answer-head{min-height:38px;padding:9px 11px;border-bottom:1px solid rgba(16,20,28,.10);background:#eef0f3;color:#566171;font:600 12px/1 var(--ui) !important;letter-spacing:.04em}
++.answer-text{display:flex;flex-direction:column;gap:9px;padding:10px 10px 12px;max-height:min(34vh,290px);overflow-y:auto;-webkit-overflow-scrolling:touch;background:#f5f6f8;white-space:normal !important}
++.chat-msg{max-width:88%;padding:9px 11px;border-radius:15px;font:500 15px/1.38 var(--ui);white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:0 1px 1px rgba(0,0,0,.05)}
++.chat-msg.user{align-self:flex-end;background:#2f6fd0;color:#fff;border-bottom-right-radius:5px}
++.chat-msg.merlin{align-self:flex-start;background:#fff;color:#151a21;border:1px solid rgba(16,20,28,.09);border-bottom-left-radius:5px}
++.chat-msg.thinking{align-self:flex-start;color:#7a8492;background:#fff;border:1px solid rgba(16,20,28,.08);font-weight:700;letter-spacing:.12em}
++.chat-work{width:100%;padding:2px 1px;color:#172033;font:600 14px/1.45 var(--num);white-space:pre-wrap}
++body.typing .subtitles{display:none !important}
++body.typing #bar{display:none !important}
++body:not(.typing) #typeBox{display:none !important}
++body:not(.typing) #answerBox:not(.work-visible){display:none !important}
++.subtitles{pointer-events:none}
+@@
+-    <div class="answerbox" id="answerBox" hidden><div class="answer-head">MERLIN<button type="button" class="answer-copy" id="answerCopy">Copy</button></div><div class="answer-text" id="answerText"></div></div>
++    <div class="answerbox" id="answerBox" hidden>
++      <div class="answer-head"><span id="answerTitle">Text Chat</span><button type="button" class="answer-copy" id="answerCopy">Copy</button></div>
++      <div class="answer-text" id="answerText" role="log" aria-live="polite" aria-label="Text conversation with Merlin"></div>
++    </div>
+@@
+-  $('subs').checked = load('subs') === null ? true : load('subs') === '1';
++  $('subs').checked = load('subs') === null ? false : load('subs') === '1';
+@@
+-  function syncSubStrip(){ var st = document.getElementById('subStrip'); if(st){ st.classList.toggle('off', !$('subs').checked); if(typeof syncDock === 'function') syncDock(); } }
+-  $('subs').addEventListener('change', function(){ store('subs', $('subs').checked ? '1' : '0'); if(!$('subs').checked) caption(''); syncSubStrip(); });
++  function syncSubStrip(){ var st = document.getElementById('subStrip'); if(st){ st.classList.toggle('off', textMode || !$('subs').checked); if(!$('subs').checked) clearSubtitles(); if(typeof syncDock === 'function') syncDock(); } }
++  $('subs').addEventListener('change', function(){ store('subs', $('subs').checked ? '1' : '0'); if(!$('subs').checked) clearSubtitles(); syncSubStrip(); });
+@@
+-  /* ================= caption ================= */
+-  var capTimer = null;
++  /* ================= caption / subtitle continuity ================= */
++  var capTimer = null, subTimer = null;
+@@
+   function tidySentence(t){
+     t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+     if(!t) return t;
+     t = t.charAt(0).toUpperCase() + t.slice(1);
+     if(!/[.!?…:]$/.test(t)) t += '.';
+     return t;
+   }
++  function clearSubtitles(){
++    clearTimeout(subTimer); subTimer = null;
++    var strip = document.getElementById('subStrip');
++    if(strip){ strip.textContent = ''; strip.classList.add('empty'); }
++  }
+   function caption(text, who, linger){
+     if(who === 'wiz' || who === 'sys') text = tidySentence(text);
++    clearTimeout(capTimer);
++    var typingNow = !!textMode;
+     var strip = document.getElementById('subStrip');
++    var subtitleDialogue = who === 'me' || who === 'wiz';
++    var showStrip = !!(strip && text && subtitleDialogue && !typingNow && $('subs') && $('subs').checked);
+     if(strip){
+-      var show = text && who !== 'sys' && ((who !== 'me' && who !== 'wiz') || $('subs').checked);
+-      strip.textContent = show ? text : '';
+-      strip.classList.toggle('empty', !show);
++      clearTimeout(subTimer); subTimer = null;
++      strip.textContent = showStrip ? text : '';
++      strip.classList.toggle('empty', !showStrip);
++      if(showStrip && linger) subTimer = setTimeout(clearSubtitles, Math.max(500, linger));
+     }
+-    clearTimeout(capTimer);
+-    if(who === 'sys') text = '';
+-    if((who === 'me' || who === 'wiz') && !$('subs').checked) text = '';
+-    captionEl.textContent = text || '';
+-    captionEl.classList.toggle('me', who === 'me');
+-    captionEl.classList.toggle('hide', !text);
+-    captionEl.scrollTop = captionEl.scrollHeight;
+-    if(text && linger) capTimer = setTimeout(function(){ captionEl.classList.add('hide'); }, linger);
++    captionEl.textContent = '';
++    captionEl.classList.remove('me');
++    captionEl.classList.add('hide');
+   }
+@@
+     try{ elAudio.pause(); }catch(e){} neuralOn = false;
+     if(synth) synth.cancel();
+     if(mode === 'speech') mode = 'idle';
++    if(!textMode) clearSubtitles();
+   }
+@@
+ function webNeedFor(text,out){
+-  var q=normalizeCameraSpeech(text);
++  var q=normalizeCameraSpeech(text), bridge=webBridgeAddress();
+   if(!$('web') || !$('web').checked) return {needed:false};
+   if(out && out.clarify) return {needed:false};
+-  if(explicitWebRequest(q)) return {needed:true,reason:'explicit'};
+-  if(freshWebRequest(q)) return {needed:true,reason:'fresh'};
+-  if(out && out.confidence < .75) return {needed:true,reason:'unknown'};
++  if(explicitWebRequest(q)) return {needed:true,reason:bridge?'explicit':'unavailable'};
++  if(freshWebRequest(q)) return {needed:true,reason:bridge?'fresh':'unavailable'};
++  if(bridge && out && out.confidence < .75) return {needed:true,reason:'unknown'};
+   return {needed:false};
+ }
+ function webBridgeAddress(){ return ($('webBridge') ? $('webBridge').value.trim() : load('webBridge') || '').trim(); }
+ function openWebSearch(query){
++  // User-invoked only. Merlin never leaves the app automatically.
+   var url='https://www.google.com/search?q='+encodeURIComponent(query);
+-  try{ window.open(url,'_blank','noopener'); }catch(e){ try{ location.href=url; }catch(x){} }
++  try{ window.open(url,'_blank','noopener'); }catch(e){}
+ }
+ function webFallbackResult(text){
+-  openWebSearch(text);
+-  return result('I opened that search in Safari. I do not have a web helper configured yet, so I cannot read the results back into this conversation.',null,.95,false);
++  return result('Live web search is not connected inside Merlin yet. I can still answer from my local camera library, manuals, calculations, and saved knowledge.',null,.98,false);
+ }
+ async function queryWebBridge(text){
+   var bridge=webBridgeAddress();
+   if(!bridge) return webFallbackResult(text);
+   if(typeof navigator!=='undefined' && navigator.onLine===false) return result('Web Access is on, but this device is offline. My local camera brain still works.',null,1,false);
+-  showDialogue('SEARCHING THE ARCHIVES…',[]); caption('SEARCHING THE ARCHIVES…','wiz');
++  if(textMode){ setTextThinking(true, 'Searching…'); }
++  else { voiceStatus('Searching…', false); if($('subs') && $('subs').checked) caption('Searching…','wiz',1800); }
+@@
+ async function ask(text){
+   unlock(); poke(); remarked=false;
++  var askedInTextMode=!!textMode;
+   var nowS=performance.now()/1000;
+   gaze.tx=(Math.random()-.5)*.7;gaze.ty=-.08;gaze.next=nowS+1.35;kick.brow+=.55;kick.smile+=.12;
+   if(Math.random()<.68){var er=Math.random();startEmote(er<.62?'curious':er<.84?'peer':'approve',nowS);}
+   text=(text||'').trim();if(!text)return;
++  if(askedInTextMode){ appendTextMessage('user',text); setTextThinking(true,'Thinking…'); }
+   var wantsFile=explicitFileRequest(text);
+   updateContextFromText(text);
+-  stopSpeech();pauseListening();clearSummon();caption(text,'me');history.push({role:'user',content:text});streamDone=false;thinking=true;gaze.next=0;
+-  setTimeout(function(){if(thinking)caption('…');},250);
++  stopSpeech();pauseListening();clearSummon();
++  if(!askedInTextMode) caption(text,'me',1800); else clearSubtitles();
++  history.push({role:'user',content:text});streamDone=false;thinking=true;gaze.next=0;
+   await new Promise(function(resolve){setTimeout(resolve,110+Math.random()*180);});
+   var out;
+   try{out=offlineReply(text);}catch(e){out=result('I lost the thread for a moment. Say the calculation again with the key values and units.',null,.2,true);}
+   out=out||defaultOfflineAnswer(text,normalizeCameraSpeech(text));
+   var webNeed=webNeedFor(text,out);
+   if(webNeed.needed){ out=await queryWebBridge(text); }
+   thinking=false;
++  if(askedInTextMode) setTextThinking(false);
+   var full=(out.answer||'').trim();
+-  caption(full,'wiz');history.push({role:'assistant',content:full});saveResponseToMemory(text,full,out.calc);presentAnswer(full,wantsFile,text);streamDone=true;queueSpeech(full);
++  if(!askedInTextMode) caption(full,'wiz');
++  history.push({role:'assistant',content:full});saveResponseToMemory(text,full,out.calc);presentAnswer(full,wantsFile,text);streamDone=true;
++  if(!askedInTextMode) queueSpeech(full);
+   if(history.length>30)history=history.slice(-30);
+ }
+@@
+-  function onWizardDone(){ resumeListening(); }
++  function onWizardDone(){
++    if(!textMode){ clearTimeout(subTimer); subTimer=setTimeout(clearSubtitles,900); }
++    resumeListening();
++  }
+@@
+-  var textMode = false, workOpen = false;
+-  function setInputMode(mode){
++  var textMode = false, workOpen = false, workText = '', textThinking = false, textThinkingLabel = 'Thinking…';
++  var textLog = [];
++  function setInputMode(mode){
+     var typing = mode === 'text';
+     textMode = typing;
++    document.body.classList.toggle('typing', typing);
+     var strip = document.getElementById('subStrip');
+-    if(strip) strip.classList.toggle('off', typing || !$('subs').checked);
++    if(strip) strip.classList.toggle('off', typing || !$('subs').checked);
++    if(typing) clearSubtitles();
+     if($('bar')) $('bar').hidden = typing;
+     if($('typeBox')) $('typeBox').hidden = !typing;
+-    if($('answerBox')) $('answerBox').hidden = !((typing || workOpen) && $('answerText') && $('answerText').textContent.trim());
+-    document.body.classList.toggle('typing', typing);
++    renderAnswerSurface();
++    if(!typing && !micOn) voiceStatus('Tap Merlin to talk', false);
+   }
+   function openTypeBox(){
+     var box = $('typeBox'); if(!box) return;
+-    if(textMode){ closeTypeBox(); return; }
+-    selectTab('chat'); setInputMode('text'); stopSpeech();
++    if(textMode){ closeTypeBox(); return; }
++    selectTab('chat'); stopSpeech(); pauseListening();
++    setInputMode('text');
+     if(micOn) setMic(false);
+     syncDock();
+     setTimeout(function(){ var i = $('typeInput'); if(i) i.focus(); }, 0);
+   }
+   function closeTypeBox(){
+     var i = $('typeInput'); if(i) i.blur();
++    textThinking = false;
+     setInputMode('voice');
+     syncDock();
+   }
+-  var textLog = [];
+-  function showAnswerText(t, raw){
+-    if(raw){
+-      var bx = $('answerBox'), elx = $('answerText');
+-      if(bx && elx){ elx.textContent = t; bx.hidden = false; syncDock(); }
+-      return;
++  function appendTextMessage(role, t){
++    t = String(t == null ? '' : t).trim(); if(!t) return;
++    textLog.push({role:role === 'user' ? 'user' : 'merlin', text:role === 'user' ? t : tidySentence(t)});
++    if(textLog.length > 30) textLog = textLog.slice(-30);
++    renderAnswerSurface(true);
++  }
++  function setTextThinking(on, label){
++    textThinking = !!on; if(label) textThinkingLabel = label;
++    renderAnswerSurface(true);
++  }
++  function renderAnswerSurface(scrollBottom){
++    var box=$('answerBox'), el=$('answerText'), title=$('answerTitle'); if(!box||!el) return;
++    el.innerHTML='';
++    if(workOpen){
++      box.classList.add('work-visible');
++      if(title) title.textContent='Stop Compensation';
++      var pre=document.createElement('div'); pre.className='chat-work'; pre.textContent=workText||''; el.appendChild(pre);
++      box.hidden=!workText;
++    }else if(textMode){
++      box.classList.remove('work-visible');
++      if(title) title.textContent='Text Chat';
++      textLog.forEach(function(m){
++        var d=document.createElement('div');
++        d.className='chat-msg '+m.role;
++        d.textContent=m.text;
++        el.appendChild(d);
++      });
++      if(textThinking){
++        var th=document.createElement('div');
++        th.className='chat-msg thinking';
++        th.textContent=textThinkingLabel||'Thinking…';
++        el.appendChild(th);
++      }
++      box.hidden=!(textLog.length||textThinking);
++    }else{
++      box.classList.remove('work-visible');
++      box.hidden=true;
+     }
+-    t = tidySentence(t);
+-    var box = $('answerBox'), el = $('answerText'); if(!box || !el) return;
+-    t = (t || '').trim();
+-    if(t){ textLog.push(t); if(textLog.length > 6) textLog.shift(); }
+-    el.textContent = textLog.join('\n\n');
+-    var typing = document.body.classList.contains('typing');
+-    box.hidden = !(t && typing);
+-    if(!box.hidden) box.scrollTop = 0;
++    if(!box.hidden && scrollBottom!==false) requestAnimationFrame(function(){ el.scrollTop=el.scrollHeight; });
++    syncDock();
++  }
++  function showAnswerText(t, raw){
++    if(raw){
++      workText=String(t==null?'':t);
++      renderAnswerSurface(true);
++      return;
++    }
++    if(textMode) appendTextMessage('merlin', t);
+   }
+   if($('answerCopy')) $('answerCopy').onclick = function(){
+-    var t = $('answerText').textContent;
++    var t = workOpen ? workText : textLog.map(function(m){
++      return (m.role==='user'?'You: ':'Merlin: ')+m.text;
++    }).join('\n\n');
+     if(navigator.clipboard) navigator.clipboard.writeText(t).then(function(){
+       $('answerCopy').textContent = 'Copied';
+       setTimeout(function(){ $('answerCopy').textContent = 'Copy'; }, 1200);
+@@
+   function closeStopComp(){
+     scClosePicker(); runesHome();
+-    workOpen = false;
+-    if($('answerBox') && !document.body.classList.contains('typing')) $('answerBox').hidden = true;
++    workOpen = false; workText=''; renderAnswerSurface(false);
+     if($('stopResult')) $('stopResult').hidden = true;
+     if($('voiceStatus')) $('voiceStatus').hidden = false;
+     if(typeof recordCalc === 'function' && SC){
+       var r = scResult();
+       try{ recordCalc('stop-comp', {netStops:r.net, breakdown:[], raw:'runes'}, r.spoken); }catch(e){}
+     }
+   }
+@@
+-  $('clear').onclick = function(){ stopAll(); history = []; caption(''); clearSummon(); closeSheet(); };
++  $('clear').onclick = function(){
++    stopAll();
++    history = [];
++    textLog = [];
++    textThinking = false;
++    workText = '';
++    workOpen = false;
++    clearSubtitles();
++    renderAnswerSurface(false);
++    clearSummon();
++    closeSheet();
++  };
